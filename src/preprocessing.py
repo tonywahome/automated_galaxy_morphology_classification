@@ -1,13 +1,30 @@
+# src/preprocessing.py
 import numpy as np
 from astroNN.datasets import galaxy10
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
+import cv2
 
 def load_galaxy_data():
     """Load Galaxy10 DECaLS dataset."""
     images, labels = galaxy10.load_data()
     images = images.astype('float32') / 255.0  # Normalize
     return images, labels
+
+def resize_for_lenet(images, target_size=(32, 32)):
+    """Resize images to 32x32 for LeNet-5 architecture."""
+    resized = np.zeros((len(images), target_size[0], target_size[1], 3))
+    for i, img in enumerate(images):
+        resized[i] = cv2.resize(img, target_size)
+    return resized
+
+def convert_to_grayscale(images):
+    """Convert RGB to grayscale for traditional LeNet-5."""
+    grayscale = np.zeros((len(images), images.shape[1], images.shape[2], 1))
+    for i, img in enumerate(images):
+        gray = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+        grayscale[i] = (gray / 255.0).reshape(images.shape[1], images.shape[2], 1)
+    return grayscale
 
 def split_data(images, labels, test_size=0.15, val_size=0.15):
     """Split into train/val/test sets."""
