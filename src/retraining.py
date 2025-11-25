@@ -1,10 +1,11 @@
 # src/retraining.py
 import os
 import json
+import numpy as np
 import tensorflow as tf
 from datetime import datetime
-from src.preprocessing import load_galaxy_data, split_data, create_augmentation_layer
-from src.model import create_galaxy_classifier, compile_model, train_model
+from preprocessing import load_galaxy_data, split_data, create_augmentation_layer
+from model import create_galaxy_classifier, compile_model, train_model
 
 class RetrainingPipeline:
     def __init__(self, model_path='models/galaxai_model.h5', 
