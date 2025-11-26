@@ -1,10 +1,22 @@
-# src/retraining.py
+# src/functions/retraining.py
 import os
+import sys
 import json
+import numpy as np
 import tensorflow as tf
 from datetime import datetime
-from src.preprocessing import load_galaxy_data, split_data, create_augmentation_layer
-from src.model import create_galaxy_classifier, compile_model, train_model
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from preprocessing import load_galaxy_data, split_data
+from optimized_model import (
+    create_optimized_galaxy_classifier,
+    compile_optimized_model,
+    get_training_callbacks,
+    calculate_class_weights
+)
+from training_utils import train_with_gradual_unfreezing
 
 class RetrainingPipeline:
     def __init__(self, model_path='models/galaxai_model.h5', 
@@ -41,11 +53,8 @@ class RetrainingPipeline:
         
         return X_merged, y_merged
     
-    def retrain(self, epochs=30, fine_tune=True):
+    def retrain(self, epochs=30, fine_tune=True, initial_epochs=15, fine_tune_epochs=15):
         """Execute retraining pipeline."""
-        # Load existing model
-        existing_model = tf.keras.models.load_model(self.model_path)
-        
         # Load original data
         orig_images, orig_labels = load_galaxy_data()
         
@@ -63,28 +72,87 @@ class RetrainingPipeline:
         
         # Split data
         train_data, val_data, test_data = split_data(X_all, y_all)
+        X_train, y_train = train_data
+        X_val, y_val = val_data
+        X_test, y_test = test_data
+        
+        # Calculate class weights
+        class_weights = calculate_class_weights(y_train)
         
         # Fine-tune or create new model
-        if fine_tune:
-            model = existing_model
-            model.compile(
-                optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5),
-                loss='sparse_categorical_crossentropy',
-                metrics=['accuracy']
+        if fine_tune and os.path.exists(self.model_path):
+            # Load existing model for fine-tuning
+            model = tf.keras.models.load_model(self.model_path)
+            
+            # Get base model for gradual unfreezing
+            base_model = None
+            for layer in model.layers:
+                if 'efficientnet' in layer.name.lower():
+                    base_model = layer
+                    break
+            
+            if base_model is None:
+                print("Warning: Could not find base model, training all layers")
+                base_model = model
+            
+            # Recompile with lower learning rate for fine-tuning
+            model = compile_optimized_model(
+                model,
+                learning_rate=1e-5,
+                label_smoothing=0.1,
+                class_weights=class_weights
             )
         else:
-            model, _ = create_galaxy_classifier()
-            model = compile_model(model)
+            # Create new model
+            model, base_model = create_optimized_galaxy_classifier(
+                num_classes=10,
+                input_shape=(256, 256, 3),
+                backbone='efficientnetv2s',
+                use_augmentation=True,
+                dropout_rate=0.35,
+                l2_reg=0.01,
+                dense_units=256
+            )
+            
+            model = compile_optimized_model(
+                model,
+                learning_rate=1e-4,
+                label_smoothing=0.1,
+                class_weights=class_weights
+            )
         
-        # Train
-        history = train_model(model, train_data, val_data, epochs=epochs)
+        # Setup callbacks
+        callbacks = get_training_callbacks(
+            model_save_path=self.model_path,
+            patience=10,
+            min_delta=0.0005,
+            reduce_lr_patience=5
+        )
+        
+        # Train with gradual unfreezing
+        history = train_with_gradual_unfreezing(
+            model=model,
+            base_model=base_model,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            initial_epochs=initial_epochs,
+            fine_tune_epochs=fine_tune_epochs,
+            batch_size=64,
+            initial_lr=1e-5 if fine_tune else 1e-4,
+            fine_tune_lr=1e-6 if fine_tune else 1e-5,
+            class_weights=class_weights,
+            callbacks=callbacks
+        )
         
         # Evaluate
-        test_loss, test_acc = model.evaluate(test_data[0], test_data[1])
+        test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
         
-        # Save new model
+        # Save new model with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_model_path = f'models/galaxai_model_{timestamp}.h5'
+        os.makedirs('models', exist_ok=True)
         model.save(new_model_path)
         model.save(self.model_path)  # Update main model
         
@@ -95,7 +163,9 @@ class RetrainingPipeline:
             "training_samples": len(X_all),
             "new_samples_added": len(new_images),
             "retrained_at": datetime.now().isoformat(),
-            "epochs": epochs
+            "initial_epochs": initial_epochs,
+            "fine_tune_epochs": fine_tune_epochs,
+            "total_epochs": initial_epochs + fine_tune_epochs
         }
         with open(self.metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -107,7 +177,8 @@ class RetrainingPipeline:
             "status": "success",
             "accuracy": float(test_acc),
             "model_path": new_model_path,
-            "metadata": metadata
+            "metadata": metadata,
+            "history": history.history if hasattr(history, 'history') else history
         }
     
     def _clear_uploads(self):
