@@ -17,8 +17,8 @@ read -p "Enter option (1-5): " option
 case $option in
   1)
     echo "Deploying locally with Docker..."
-    cd application/docker
-    docker-compose up --build -d
+    cd ../docker
+    docker compose up --build -d
     echo "Deployment complete!"
     echo "API: http://localhost:8000"
     echo "UI: http://localhost:8501"
@@ -27,24 +27,24 @@ case $option in
     echo "Deploying to AWS ECS..."
     aws cloudformation create-stack \
       --stack-name galaxyai-production \
-      --template-body file://deployment/aws/cloudformation-template.yaml \
+      --template-body file://aws/cloudformation-template.yaml \
       --capabilities CAPABILITY_IAM
     echo "Deployment initiated. Check AWS Console for status."
     ;;
   3)
     echo "Deploying to GCP Cloud Run..."
-    bash deployment/gcp/deploy_cloud_run.sh
+    bash gcp/deploy_cloud_run.sh
     ;;
   4)
     echo "Deploying to Kubernetes..."
-    kubectl apply -f deployment/kubernetes/deployment.yaml
+    kubectl apply -f kubernetes/deployment.yaml
     echo "Deployment complete!"
     kubectl get services -n galaxyai
     ;;
   5)
     read -p "Enter API endpoint: " endpoint
     read -p "Enter test data directory: " test_data
-    python deployment/production_evaluation.py \
+    python production_evaluation.py \
       --endpoint "$endpoint" \
       --test-data "$test_data"
     ;;

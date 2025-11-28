@@ -9,14 +9,20 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from preprocessing import load_galaxy_data, split_data
-from optimized_model import (
-    create_optimized_galaxy_classifier,
-    compile_optimized_model,
-    get_training_callbacks,
-    calculate_class_weights
+# Import from preprocessing module
+import preprocessing as preproc
+# Import model functions from preprocessing subdirectory
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'preprocessing'))
+from model import (
+    create_galaxy_classifier,
+    compile_model,
+    train_model,
+    compute_class_weights
 )
-from training_utils import train_with_gradual_unfreezing
+
+# Use preprocessing functions
+load_galaxy_data = preproc.load_galaxy_data
+split_data = preproc.split_data
 
 class RetrainingPipeline:
     def __init__(self, model_path='models/galaxai_model.h5', 
@@ -76,74 +82,54 @@ class RetrainingPipeline:
         X_val, y_val = val_data
         X_test, y_test = test_data
         
-        # Calculate class weights
-        class_weights = calculate_class_weights(y_train)
-        
         # Fine-tune or create new model
         if fine_tune and os.path.exists(self.model_path):
             # Load existing model for fine-tuning
             model = tf.keras.models.load_model(self.model_path)
             
-            # Get base model for gradual unfreezing
-            base_model = None
-            for layer in model.layers:
-                if 'efficientnet' in layer.name.lower():
-                    base_model = layer
-                    break
-            
-            if base_model is None:
-                print("Warning: Could not find base model, training all layers")
-                base_model = model
-            
             # Recompile with lower learning rate for fine-tuning
-            model = compile_optimized_model(
-                model,
-                learning_rate=1e-5,
-                label_smoothing=0.1,
-                class_weights=class_weights
+            model.compile(
+                optimizer=tf.keras.optimizers.AdamW(learning_rate=1e-5),
+                loss='sparse_categorical_crossentropy',
+                metrics=['accuracy']
             )
         else:
             # Create new model
-            model, base_model = create_optimized_galaxy_classifier(
+            model, base_model = create_galaxy_classifier(
                 num_classes=10,
-                input_shape=(256, 256, 3),
-                backbone='efficientnetv2s',
-                use_augmentation=True,
-                dropout_rate=0.35,
-                l2_reg=0.01,
-                dense_units=256
+                input_shape=(256, 256, 3)
             )
             
-            model = compile_optimized_model(
-                model,
-                learning_rate=1e-4,
-                label_smoothing=0.1,
-                class_weights=class_weights
-            )
+            model = compile_model(model, learning_rate=1e-4)
         
         # Setup callbacks
-        callbacks = get_training_callbacks(
-            model_save_path=self.model_path,
-            patience=10,
-            min_delta=0.0005,
-            reduce_lr_patience=5
-        )
+        callbacks = [
+            tf.keras.callbacks.EarlyStopping(
+                patience=10,
+                restore_best_weights=True,
+                monitor='val_loss',
+                min_delta=0.0005
+            ),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                factor=0.5,
+                patience=5,
+                monitor='val_loss'
+            ),
+            tf.keras.callbacks.ModelCheckpoint(
+                self.model_path,
+                save_best_only=True,
+                monitor='val_loss'
+            )
+        ]
         
-        # Train with gradual unfreezing
-        history = train_with_gradual_unfreezing(
-            model=model,
-            base_model=base_model,
-            X_train=X_train,
-            y_train=y_train,
-            X_val=X_val,
-            y_val=y_val,
-            initial_epochs=initial_epochs,
-            fine_tune_epochs=fine_tune_epochs,
-            batch_size=64,
-            initial_lr=1e-5 if fine_tune else 1e-4,
-            fine_tune_lr=1e-6 if fine_tune else 1e-5,
-            class_weights=class_weights,
-            callbacks=callbacks
+        # Train model
+        history = model.fit(
+            X_train, y_train,
+            validation_data=(X_val, y_val),
+            epochs=epochs,
+            batch_size=32,
+            callbacks=callbacks,
+            class_weight=compute_class_weights(y_train)
         )
         
         # Evaluate
