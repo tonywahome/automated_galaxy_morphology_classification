@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: galaxyai
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: galaxyai-api
+  namespace: galaxyai
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: galaxyai-api
+  template:
+    metadata:
+      labels:
+        app: galaxyai-api
+        version: v1
+    spec:
+      containers:
+        - name: api
+          image: yourusername/galaxyai-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: TF_CPP_MIN_LOG_LEVEL
+              value: "2"
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: galaxyai-api-service
+  namespace: galaxyai
+spec:
+  type: LoadBalancer
+  selector:
+    app: galaxyai-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: galaxyai-api-hpa
+  namespace: galaxyai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: galaxyai-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

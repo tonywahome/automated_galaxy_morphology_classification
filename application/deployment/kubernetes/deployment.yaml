@@ -1,0 +1,274 @@
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: galaxyai
+
+---
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: galaxyai-config
+  namespace: galaxyai
+data:
+  TF_CPP_MIN_LOG_LEVEL: "2"
+  MODEL_PATH: "/app/models/galaxyai_model.h5"
+
+---
+# Secret (for sensitive data - update with actual values)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: galaxyai-secrets
+  namespace: galaxyai
+type: Opaque
+stringData:
+  # Add any API keys, database credentials, etc.
+  # Example: DATABASE_URL: "postgresql://user:password@host:5432/db"
+  PLACEHOLDER: "update-with-actual-secrets"
+
+---
+# Persistent Volume Claim (for model storage)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: galaxyai-model-pvc
+  namespace: galaxyai
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: galaxyai-api
+  namespace: galaxyai
+  labels:
+    app: galaxyai
+    component: api
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: galaxyai
+      component: api
+  template:
+    metadata:
+      labels:
+        app: galaxyai
+        component: api
+    spec:
+      containers:
+        - name: api
+          image: yourusername/galaxyai-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          env:
+            - name: TF_CPP_MIN_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: galaxyai-config
+                  key: TF_CPP_MIN_LOG_LEVEL
+            - name: MODEL_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: galaxyai-config
+                  key: MODEL_PATH
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/models
+              readOnly: true
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: galaxyai-model-pvc
+      # Optional: Use node selector for GPU nodes
+      # nodeSelector:
+      #   accelerator: nvidia-tesla-t4
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: galaxyai-api-service
+  namespace: galaxyai
+  labels:
+    app: galaxyai
+    component: api
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: galaxyai
+    component: api
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+
+---
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: galaxyai-api-hpa
+  namespace: galaxyai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: galaxyai-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: galaxyai-api-pdb
+  namespace: galaxyai
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: galaxyai
+      component: api
+
+---
+# Ingress (optional - for custom domain)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: galaxyai-ingress
+  namespace: galaxyai
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  tls:
+    - hosts:
+        - galaxyai.yourdomain.com
+      secretName: galaxyai-tls
+  rules:
+    - host: galaxyai.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: galaxyai-api-service
+                port:
+                  number: 80
+
+---
+# Network Policy (optional - for enhanced security)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: galaxyai-network-policy
+  namespace: galaxyai
+spec:
+  podSelector:
+    matchLabels:
+      app: galaxyai
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443 # HTTPS
+        - protocol: TCP
+          port: 80 # HTTP
+        - protocol: TCP
+          port: 53 # DNS
+        - protocol: UDP
+          port: 53 # DNS
