@@ -10,16 +10,27 @@ CLASS_NAMES = [
 ]
 
 def preprocess_image(image_path_or_bytes, target_size=(256, 256)):
-    """Preprocess a single image for prediction."""
+    """Preprocess a single image for prediction.
+    
+    IMPORTANT: This must match the training preprocessing exactly.
+    The model was trained on images normalized to [0, 1] range.
+    """
     if isinstance(image_path_or_bytes, bytes):
         import io
         img = Image.open(io.BytesIO(image_path_or_bytes))
     else:
         img = Image.open(image_path_or_bytes)
     
+    # Convert to RGB (handles grayscale, RGBA, etc.)
     img = img.convert('RGB')
-    img = img.resize(target_size)
-    img_array = np.array(img) / 255.0
+    
+    # Resize to target size using high-quality resampling
+    img = img.resize(target_size, Image.Resampling.LANCZOS)
+    
+    # Convert to numpy array and normalize to [0, 1]
+    img_array = np.array(img, dtype=np.float32) / 255.0
+    
+    # Add batch dimension
     return np.expand_dims(img_array, axis=0)
 
 def predict_single(model, image):
