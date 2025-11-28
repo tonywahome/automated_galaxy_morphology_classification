@@ -2,6 +2,18 @@
 
 This repository contains an end-to-end Machine Learning pipeline for classifying galaxy images into morphological categories, with cloud deployment, monitoring, and retraining capabilities. [cite: 995, 997, 998]
 
+## 🔗 Quick Links
+
+| Resource                   | Link                                                                                             | Description                             |
+| :------------------------- | :----------------------------------------------------------------------------------------------- | :-------------------------------------- |
+| **📹 Video Demo**          | [Watch Demo](https://drive.google.com/file/d/1T3Tmobnf70vuD7IeeXJCV7_SrgHDDfdJ/view?usp=sharing) | Full walkthrough of the application     |
+| **🎨 Streamlit UI**        | [http://localhost:8501](http://localhost:8501)                                                   | Web interface for galaxy classification |
+| **🚀 API Server**          | [http://localhost:8000](http://localhost:8000)                                                   | FastAPI backend service                 |
+| **📊 API Documentation**   | [http://localhost:8000/docs](http://localhost:8000/docs)                                         | Interactive Swagger UI                  |
+| **🧪 Locust Load Testing** | [http://localhost:8089](http://localhost:8089)                                                   | Performance testing interface           |
+
+---
+
 ## 1. Project Overview
 
 The GalaxAI project is an MLOps demonstration in the field of astrophysics, focused on automated image classification.
